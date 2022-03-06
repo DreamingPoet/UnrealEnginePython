@@ -215,7 +215,7 @@ PyObject *py_unreal_engine_object_path_to_package_name(PyObject * self, PyObject
 	{
 		return NULL;
 	}
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPackageName::ObjectPathToPackageName(UTF8_TO_TCHAR(path))));
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPackageName::ObjectPathToPackageName( FString( UTF8_TO_TCHAR(path) ) )));
 }
 
 PyObject *py_unreal_engine_get_path(PyObject * self, PyObject * args)
@@ -315,7 +315,11 @@ PyObject *py_unreal_engine_unload_package(PyObject * self, PyObject * args)
 	}
 
 	FText outErrorMsg;
+#if ENGINE_MINOR_VERSION >= 21
+	if (!UPackageTools::UnloadPackages({ packageToUnload }, outErrorMsg))
+#else
 	if (!PackageTools::UnloadPackages({ packageToUnload }, outErrorMsg))
+#endif
 	{
 		return PyErr_Format(PyExc_Exception, "%s", TCHAR_TO_UTF8(*outErrorMsg.ToString()));
 	}
@@ -589,7 +593,9 @@ PyObject *py_unreal_engine_new_object(PyObject * self, PyObject * args)
 		outer = ue_py_check_type<UObject>(py_outer);
 		if (!outer)
 			return PyErr_Format(PyExc_Exception, "argument is not a UObject");
+		EXTRA_UE_LOG(LogPython, Warning, TEXT("object creation outer is %s"), *outer->GetName());
 	}
+
 
 	UObject *new_object = nullptr;
 	Py_BEGIN_ALLOW_THREADS;
@@ -1051,7 +1057,11 @@ PyObject *py_unreal_engine_create_package(PyObject *self, PyObject * args)
 	{
 		return PyErr_Format(PyExc_Exception, "package %s already exists", TCHAR_TO_UTF8(*u_package->GetPathName()));
 	}
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	u_package = CreatePackage(UTF8_TO_TCHAR(name));
+#else
 	u_package = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+#endif
 	if (!u_package)
 		return PyErr_Format(PyExc_Exception, "unable to create package");
 	u_package->FileName = *FPackageName::LongPackageNameToFilename(UTF8_TO_TCHAR(name), FPackageName::GetAssetPackageExtension());
@@ -1076,7 +1086,11 @@ PyObject *py_unreal_engine_get_or_create_package(PyObject *self, PyObject * args
 	// create a new package if it does not exist
 	if (!u_package)
 	{
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+		u_package = CreatePackage(UTF8_TO_TCHAR(name));
+#else
 		u_package = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+#endif
 		if (!u_package)
 			return PyErr_Format(PyExc_Exception, "unable to create package");
 		u_package->FileName = *FPackageName::LongPackageNameToFilename(UTF8_TO_TCHAR(name), FPackageName::GetAssetPackageExtension());

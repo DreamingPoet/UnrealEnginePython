@@ -12,6 +12,7 @@
 #include "UnrealEd.h"
 #include "FbxMeshUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+
 #include "Editor/LevelEditor/Public/LevelEditorActions.h"
 #include "Editor/UnrealEd/Public/EditorLevelUtils.h"
 #include "Runtime/Projects/Public/Interfaces/IPluginManager.h"
@@ -40,6 +41,7 @@
 #include "Runtime/Engine/Public/EditorSupportDelegates.h"
 
 #include "UEPyIPlugin.h"
+
 
 PyObject *py_unreal_engine_redraw_all_viewports(PyObject * self, PyObject * args)
 {
@@ -88,8 +90,21 @@ PyObject *py_unreal_engine_editor_play_in_viewport(PyObject * self, PyObject * a
 	if (!EditorModule.GetFirstActiveViewport().IsValid())
 		return PyErr_Format(PyExc_Exception, "no active LevelEditor Viewport");
 
+
 	Py_BEGIN_ALLOW_THREADS;
+#if ENGINE_MINOR_VERSION >= 25
+	// this is supposed to be how it works but cant figure out where is bAtPlayerStart
+	// well basically because this is just ignored!!
+	FRequestPlaySessionParams play_params;
+	play_params.DestinationSlateViewport = EditorModule.GetFirstActiveViewport();
+	play_params.StartLocation = v;
+	play_params.StartRotation = r;
+	// added if old 3rd arg is true
+	play_params.WorldType = EPlaySessionWorldType::SimulateInEditor;
+	GEditor->RequestPlaySession(play_params);
+#else
 	GEditor->RequestPlaySession(py_vector == nullptr, EditorModule.GetFirstActiveViewport(), true, &v, &r);
+#endif
 	Py_END_ALLOW_THREADS;
 	Py_RETURN_NONE;
 
@@ -110,7 +125,17 @@ PyObject *py_unreal_engine_request_play_session(PyObject * self, PyObject * args
 	bool bSimulate = py_simulate_in_editor && PyObject_IsTrue(py_simulate_in_editor);
 
 	Py_BEGIN_ALLOW_THREADS;
+#if ENGINE_MINOR_VERSION >= 25
+	// this is supposed to be how it works but cant figure out where is bAtPlayerStart
+	// well basically because this is just ignored!!
+	FRequestPlaySessionParams play_params;
+	play_params.DestinationSlateViewport = nullptr;
+	if (bSimulate)
+		play_params.WorldType = EPlaySessionWorldType::SimulateInEditor;
+	GEditor->RequestPlaySession(play_params);
+#else
 	GEditor->RequestPlaySession(bAtPlayerStart, nullptr, bSimulate);
+#endif
 	Py_END_ALLOW_THREADS;
 	Py_RETURN_NONE;
 
@@ -277,11 +302,23 @@ PyObject *py_unreal_engine_editor_play(PyObject * self, PyObject * args)
 	}
 
 	Py_BEGIN_ALLOW_THREADS;
+#if ENGINE_MINOR_VERSION >= 25
+	// this is supposed to be how it works but cant figure out where is bAtPlayerStart
+	// well basically because this is just ignored!!
+	const FString mobile_device = FString("");
+	FRequestPlaySessionParams play_params;
+	play_params.StartLocation = v;
+	play_params.StartRotation = r;
+	// according to engine code this is ignored if old 3rd param is False (MobilePreview)
+	//play_params.MobilePreviewTargetDevice = mobile_device;
+	GEditor->RequestPlaySession(play_params);
+#else
 #if ENGINE_MINOR_VERSION >= 17
 	const FString mobile_device = FString("");
 	GEditor->RequestPlaySession(&v, &r, false, false, mobile_device);
 #else
 	GEditor->RequestPlaySession(&v, &r, false, false);
+#endif
 #endif
 	Py_END_ALLOW_THREADS;
 
@@ -639,6 +676,7 @@ PyObject *py_unreal_engine_create_asset(PyObject * self, PyObject * args)
 PyObject *py_unreal_engine_get_asset_referencers(PyObject * self, PyObject * args)
 {
 	char *path;
+
 	int depency_type = (int)EAssetRegistryDependencyType::All;
 
 	if (!PyArg_ParseTuple(args, "s|i:get_asset_referencers", &path, &depency_type))
@@ -651,7 +689,11 @@ PyObject *py_unreal_engine_get_asset_referencers(PyObject * self, PyObject * arg
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	TArray<FName> referencers;
-	AssetRegistryModule.Get().GetReferencers(UTF8_TO_TCHAR(path), referencers, (EAssetRegistryDependencyType::Type) depency_type);
+
+
+
+	AssetRegistryModule.Get().GetReferencers(UTF8_TO_TCHAR(path), referencers, (EAssetRegistryDependencyType::Type)depency_type);
+
 
 	PyObject *referencers_list = PyList_New(0);
 	for (FName name : referencers)
@@ -1140,7 +1182,13 @@ PyObject *py_unreal_engine_get_selected_assets(PyObject * self, PyObject * args)
 
 PyObject *py_unreal_engine_get_all_edited_assets(PyObject * self, PyObject * args)
 {
+
+#if ENGINE_MINOR_VERSION >= 24
+	//UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	TArray<UObject *> assets = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->GetAllEditedAssets();
+#else
 	TArray<UObject *> assets = FAssetEditorManager::Get().GetAllEditedAssets();
+#endif
 	PyObject *assets_list = PyList_New(0);
 
 	for (UObject *asset : assets)
@@ -1168,7 +1216,13 @@ PyObject *py_unreal_engine_open_editor_for_asset(PyObject * self, PyObject * arg
 	if (!u_obj)
 		return PyErr_Format(PyExc_Exception, "argument is not a UObject");
 
+#if ENGINE_MINOR_VERSION >= 24
+	//UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+
+	if (GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(u_obj))
+#else
 	if (FAssetEditorManager::Get().OpenEditorForAsset(u_obj))
+#endif
 	{
 		Py_RETURN_TRUE;
 	}
@@ -1193,7 +1247,12 @@ PyObject *py_unreal_engine_find_editor_for_asset(PyObject * self, PyObject * arg
 	if (py_bool && PyObject_IsTrue(py_bool))
 		bFocus = true;
 
+#if ENGINE_MINOR_VERSION >= 24
+	//UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	IAssetEditorInstance *instance = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(u_obj, bFocus);
+#else
 	IAssetEditorInstance *instance = FAssetEditorManager::Get().FindEditorForAsset(u_obj, bFocus);
+#endif
 	if (!instance)
 		return PyErr_Format(PyExc_Exception, "no editor found for asset");
 
@@ -1212,14 +1271,24 @@ PyObject *py_unreal_engine_close_editor_for_asset(PyObject * self, PyObject * ar
 	UObject *u_obj = ue_py_check_type<UObject>(py_obj);
 	if (!u_obj)
 		return PyErr_Format(PyExc_Exception, "argument is not a UObject");
+
+#if ENGINE_MINOR_VERSION >= 24
+	//UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(u_obj);
+#else
 	FAssetEditorManager::Get().CloseAllEditorsForAsset(u_obj);
+#endif
 
 	Py_RETURN_NONE;
 }
 
 PyObject *py_unreal_engine_close_all_asset_editors(PyObject * self, PyObject * args)
 {
+#if ENGINE_MINOR_VERSION >= 24
+	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllAssetEditors();
+#else
 	FAssetEditorManager::Get().CloseAllAssetEditors();
+#endif
 
 	Py_RETURN_NONE;
 }
@@ -1282,13 +1351,21 @@ PyObject *py_unreal_engine_create_blueprint(PyObject * self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "invalid blueprint name");
 	}
 
-	UPackage *outer = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	UPackage *outer = CreatePackage(UTF8_TO_TCHAR(name));
+#else
+	UPackage* outer = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+#endif
 	if (!outer)
 		return PyErr_Format(PyExc_Exception, "unable to create package");
 
 	TArray<UPackage *> TopLevelPackages;
 	TopLevelPackages.Add(outer);
+#if ENGINE_MINOR_VERSION >= 21
+	if (!UPackageTools::HandleFullyLoadingPackages(TopLevelPackages, FText::FromString("Create a new object")))
+#else
 	if (!PackageTools::HandleFullyLoadingPackages(TopLevelPackages, FText::FromString("Create a new object")))
+#endif
 		return PyErr_Format(PyExc_Exception, "unable to fully load package");
 
 	if (FindObject<UBlueprint>(outer, UTF8_TO_TCHAR(bp_name)) != nullptr)
@@ -1355,7 +1432,7 @@ PyObject *py_unreal_engine_reload_blueprint(PyObject * self, PyObject * args)
 	UBlueprint *reloaded_bp = nullptr;
 
 	Py_BEGIN_ALLOW_THREADS
-		reloaded_bp = FKismetEditorUtilities::ReloadBlueprint(bp);
+		reloaded_bp = FKismetEditorUtilities::ReplaceBlueprint(bp, bp);
 	Py_END_ALLOW_THREADS
 
 		Py_RETURN_UOBJECT(reloaded_bp);
@@ -1440,7 +1517,14 @@ PyObject *py_unreal_engine_create_blueprint_from_actor(PyObject * self, PyObject
 		return PyErr_Format(PyExc_Exception, "uobject is not a UClass");
 	AActor *actor = (AActor *)py_obj->ue_object;
 
-	UBlueprint *bp = FKismetEditorUtilities::CreateBlueprintFromActor(UTF8_TO_TCHAR(name), actor, true);
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	FKismetEditorUtilities::FCreateBlueprintFromActorParams		Params;
+	Params.bReplaceActor = true;
+
+	UBlueprint* bp = FKismetEditorUtilities::CreateBlueprintFromActor( *FString( UTF8_TO_TCHAR(name) ), actor, Params);
+#else
+	UBlueprint* bp = FKismetEditorUtilities::CreateBlueprintFromActor(UTF8_TO_TCHAR(name), actor, true);
+#endif
 
 	Py_RETURN_UOBJECT(bp);
 }
@@ -2015,15 +2099,27 @@ PyObject *py_ue_factory_create_new(ue_PyUObject *self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "invalid object name");
 	}
 
+#if ENGINE_MINOR_VERSION >= 21
+	FString PackageName = UPackageTools::SanitizePackageName(FString(UTF8_TO_TCHAR(name)));
+#else
 	FString PackageName = PackageTools::SanitizePackageName(FString(UTF8_TO_TCHAR(name)));
+#endif
 
-	UPackage *outer = CreatePackage(nullptr, *PackageName);
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	UPackage* outer = CreatePackage(*PackageName);
+#else
+	UPackage* outer = CreatePackage(nullptr, *PackageName);
+#endif
 	if (!outer)
 		return PyErr_Format(PyExc_Exception, "unable to create package");
 
 	TArray<UPackage *> TopLevelPackages;
 	TopLevelPackages.Add(outer);
+#if ENGINE_MINOR_VERSION >= 21
+	if (!UPackageTools::HandleFullyLoadingPackages(TopLevelPackages, FText::FromString("Create a new object")))
+#else
 	if (!PackageTools::HandleFullyLoadingPackages(TopLevelPackages, FText::FromString("Create a new object")))
+#endif
 		return PyErr_Format(PyExc_Exception, "unable to fully load package");
 
 	UClass *u_class = factory->GetSupportedClass();
@@ -2085,7 +2181,11 @@ PyObject *py_ue_factory_import_object(ue_PyUObject *self, PyObject * args)
 	FString object_name = ObjectTools::SanitizeObjectName(FPaths::GetBaseFilename(UTF8_TO_TCHAR(filename)));
 	FString pkg_name = FString(UTF8_TO_TCHAR(name)) + TEXT("/") + object_name;
 
-	UPackage *outer = CreatePackage(nullptr, *pkg_name);
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	UPackage* outer = CreatePackage(*pkg_name);
+#else
+	UPackage* outer = CreatePackage(nullptr, *pkg_name);
+#endif
 	if (!outer)
 		return PyErr_Format(PyExc_Exception, "unable to create package");
 
@@ -2127,7 +2227,11 @@ PyObject *py_unreal_engine_add_level_to_world(PyObject *self, PyObject * args)
 	if (!FPackageName::DoesPackageExist(UTF8_TO_TCHAR(name), nullptr, nullptr))
 		return PyErr_Format(PyExc_Exception, "package does not exist");
 
+#if ENGINE_MINOR_VERSION >= 21
+	UClass *streaming_mode_class = ULevelStreamingDynamic::StaticClass();
+#else
 	UClass *streaming_mode_class = ULevelStreamingKismet::StaticClass();
+#endif
 	if (py_bool && PyObject_IsTrue(py_bool))
 	{
 		streaming_mode_class = ULevelStreamingAlwaysLoaded::StaticClass();

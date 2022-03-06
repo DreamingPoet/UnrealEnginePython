@@ -1020,10 +1020,17 @@ public:
 	virtual void RegisterCommands() override
 	{
 		commands = MakeShareable(new FUICommandList);
+#if ENGINE_MINOR_VERSION >= 25
+		// probabaly not the way to do this Runtime/Slate/Public/Framework/Commands/Commands.h says to use FUICommandInfo::MakeCommandInfo
+		// - apparently only the macros are used for localization - ie this will not get localized
+		// not clear why the UI_COMMAND macro is not used here - which simply expands to the following call
+		MakeUICommand_InternalUseOnly(this, command, nullptr, *name, *name, TCHAR_TO_UTF8(*name), *name, *name, EUserInterfaceActionType::Button, FInputChord());
+#else
 #if ENGINE_MINOR_VERSION >= 23
 		MakeUICommand_InternalUseOnly(this, command, nullptr, *name, *name, TCHAR_TO_UTF8(*name), *name, *name, EUserInterfaceActionType::Button, FInputGesture());
 #else
 		UI_COMMAND_Function(this, command, nullptr, *name, *name, TCHAR_TO_UTF8(*name), *name, *name, EUserInterfaceActionType::Button, FInputGesture());
+#endif
 #endif
 		commands->MapAction(command, FExecuteAction::CreateRaw(this, &FPythonSlateCommands::Callback), FCanExecuteAction());
 	}
@@ -1487,7 +1494,11 @@ PyObject *py_unreal_engine_invoke_tab(PyObject * self, PyObject * args)
 		return NULL;
 	}
 
+#if ENGINE_MINOR_VERSION == 27 || ENGINE_MINOR_VERSION == 26
+	FGlobalTabmanager::Get()->TryInvokeTab(FTabId(FName(UTF8_TO_TCHAR(name))));
+#else
 	FGlobalTabmanager::Get()->InvokeTab(FTabId(FName(UTF8_TO_TCHAR(name))));
+#endif
 
 	Py_INCREF(Py_None);
 	return Py_None;
